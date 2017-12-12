@@ -3,6 +3,9 @@ const router = require('express').Router()
 const passport = require('../config/auth')
 const { Game } = require('../models')
 const utils = require('../lib/utils')
+var winner = require('../lib/winner')
+var noWinner = false
+var winnerSymbol = null
 
 const authenticate = passport.authorize('jwt', { session: false })
 
@@ -19,7 +22,6 @@ module.exports = io => {
     })
     .get('/games/:id', (req, res, next) => {
       const id = req.params.id
-
       Game.findById(id)
         .then((game) => {
           if (!game) { return next() }
@@ -28,18 +30,23 @@ module.exports = io => {
         .catch((error) => next(error))
     })
     .post('/games', authenticate, (req, res, next) => {
+
+      noWinner = false
       const newGame = {
         userId: req.account._id,
         players: [{
           userId: req.account._id,
-          pairs: []
+          symbol: 'x',
+
         }],
-        cards: utils.shuffle('✿★♦✵♣♠♥✖'.repeat(2).split(''))
-          .map((symbol) => ({ visible: false, symbol: symbol }))
+        turn: null,
+        board: [null, null,null,null, null,null,null, null,null],
+
       }
 
       Game.create(newGame)
         .then((game) => {
+
           io.emit('action', {
             type: 'GAME_CREATED',
             payload: game
@@ -62,28 +69,60 @@ module.exports = io => {
         })
         .catch((error) => next(error))
     })
-    .patch('/games/:id', authenticate, (req, res, next) => {
+    .patch('/games/play/:id', authenticate, (req, res, next) => {
       const id = req.params.id
-      const patchForGame = req.body
+      const myGame = req.body.game
+      const position =req.body.index
+      const currentPlayer = req.body.currentPlayer
 
-      Game.findById(id)
-        .then((game) => {
-          if (!game) { return next() }
+      var myBoard = myGame.board
+      winnerSymbol = winner.isWinner(myBoard)
+      noWinner = winnerSymbol === null
+      console.log("WINNER IS " + winnerSymbol)
 
-          const updatedGame = { ...game, ...patchForGame }
+      if (noWinner)
+      {
 
-          Game.findByIdAndUpdate(id, { $set: updatedGame }, { new: true })
-            .then((game) => {
-              io.emit('action', {
-                type: 'GAME_UPDATED',
-                payload: game
-              })
-              res.json(game)
+        Game.findById(id)
+          .then((game) => {
+            if (!game) { return next() }
+            myGame.players[0].symbol = 'x'
+            myGame.players[1].symbol = 'o'
+
+            if ((currentPlayer.userId !== myGame.turn) && (currentPlayer.userId === myGame.players[0].userId))
+              myBoard[position] = myGame.players[0].symbol
+
+            if ((currentPlayer.userId !== myGame.turn) && (currentPlayer.userId === myGame.players[1].userId))
+                myBoard[position] = myGame.players[1].symbol
+
+
+            myGame.turn = currentPlayer.userId
+
+            winnerSymbol = winner.isWinner(myBoard)
+            if (winnerSymbol !== null)
+              winnerSymbol = currentPlayer.name
+
+            const patchForGame = Object.assign({}, myGame,{
+              board: myBoard,
+              winner: winnerSymbol
             })
-            .catch((error) => next(error))
-        })
-        .catch((error) => next(error))
+
+            const updatedGame = { ...game, ...patchForGame }
+
+            Game.findByIdAndUpdate(id, { $set: updatedGame }, { new: true })
+              .then((game) => {
+                io.emit('action', {
+                  type: 'GAME_UPDATED',
+                  payload: game
+                })
+                res.json(game)
+              })
+              .catch((error) => next(error))
+          })
+          .catch((error) => next(error))
+      }
     })
+
     .delete('/games/:id', authenticate, (req, res, next) => {
       const id = req.params.id
       Game.findByIdAndRemove(id)

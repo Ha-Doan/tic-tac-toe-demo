@@ -26,7 +26,6 @@ const getPlayers = (req, res, next) => {
 
         return {
           userId: player.userId,
-          pairs: player.pairs,
           name
         }
       })
@@ -36,6 +35,7 @@ const getPlayers = (req, res, next) => {
 }
 
 module.exports = io => {
+
   router
     .get('/games/:id/players', loadGame, getPlayers, (req, res, next) => {
       if (!req.game || !req.players) { return next() }
@@ -48,14 +48,13 @@ module.exports = io => {
       const userId = req.account._id
 
       if (req.game.players.filter((p) => p.userId.toString() === userId.toString()).length > 0) {
-        const error = Error.new('You already joined this game!')
+        const error = new Error('You already joined this game!')
         error.status = 401
         return next(error)
       }
 
       // Add the user to the players
-      req.game.players.push({ userId, pairs: [] })
-
+      req.game.players.push({ userId})
       req.game.save()
         .then((game) => {
           req.game = game
